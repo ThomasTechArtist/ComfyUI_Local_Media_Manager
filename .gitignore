@@ -1,1 +1,13 @@
+# Cache
 .cache/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local config (user-specific, should NOT be committed)
+config.json
+*_ui_state.json
+
+# OS junk
+Thumbs.db
