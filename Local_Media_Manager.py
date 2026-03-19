@@ -244,8 +244,33 @@ class LocalMediaManagerNode:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "LMM_ALL_PATHS", "STRING", "STRING",)
-    RETURN_NAMES = ("image", "mask", "paths", "path", "info",)
+    RETURN_TYPES = (
+        "IMAGE",
+        "MASK",
+        "LMM_ALL_PATHS",
+        "STRING",
+        "STRING",
+        "STRING",
+        "STRING",
+        "STRING",
+        "INT",
+        "FLOAT",
+        "INT",
+    )
+
+    RETURN_NAMES = (
+        "image",
+        "mask",
+        "paths",
+        "path",
+        "info",
+        "prompt",
+        "negative_prompt",
+        "lora_stack",
+        "steps",
+        "cfg",
+        "seed",
+    )
     FUNCTION = "get_selected_media"
     CATEGORY = "📜Asset Gallery/Local"
 
@@ -261,6 +286,13 @@ class LocalMediaManagerNode:
         info_strings = []
         valid_image_paths = []
         enriched_selection_list = []
+
+        prompt_out = ""
+        negative_prompt_out = ""
+        lora_stack_out = ""
+        steps_out = 0
+        cfg_out = 0.0
+        seed_out = 0
 
         if image_paths:
             sizes = {}
@@ -363,27 +395,95 @@ class LocalMediaManagerNode:
                                 mask_tensor = torch.from_numpy(inverted_alpha).unsqueeze(0)
                     except: pass
             
-            if mask_tensor is None:
-                 mask_tensor = torch.zeros(final_image_tensor.shape[0], h, w, dtype=torch.float32)
+        if mask_tensor is None:
+            # mask_tensor = torch.zeros(final_image_tensor.shape[0], h, w, dtype=torch.float32)
+            mask_tensor = None
+        h = final_image_tensor.shape[1]
+        w = final_image_tensor.shape[2]
+
+        if final_image_tensor is not None and final_image_tensor.nelement() > 0:
+            h, w = final_image_tensor.shape[1], final_image_tensor.shape[2]
+
+            if valid_image_paths and final_image_tensor.shape[0] == 1:
+                first_image_path = valid_image_paths[0]
+
+                filename = os.path.basename(first_image_path)
+                name, _ = os.path.splitext(filename)
+                input_dir = folder_paths.get_input_directory()
+
+                input_mask_path = os.path.join(input_dir, f"{name}_mask.png")
+                original_dir_mask_path = os.path.join(os.path.dirname(first_image_path), f"{name}_mask.png")
+
+                mask_file_to_load = None
+                if os.path.exists(input_mask_path):
+                    mask_file_to_load = input_mask_path
+                elif os.path.exists(original_dir_mask_path):
+                    mask_file_to_load = original_dir_mask_path
+
+                if mask_file_to_load:
+                    try:
+                        with Image.open(mask_file_to_load) as mask_img:
+                            if mask_img.width != w or mask_img.height != h:
+                                mask_img = mask_img.resize((w, h), Image.NEAREST)
+
+                            if 'A' in mask_img.getbands():
+                                mask_data = mask_img.split()[-1]
+                            else:
+                                mask_data = mask_img.convert("L")
+
+                            mask_np = np.array(mask_data).astype(np.float32) / 255.0
+                            mask_tensor = torch.from_numpy(mask_np).unsqueeze(0)
+
+                    except Exception as e:
+                        print(f"LMM: Error loading mask file: {e}")
+
+                if mask_tensor is None:
+                    try:
+                        with Image.open(first_image_path) as img:
+                            if img.mode == 'RGBA':
+                                alpha = np.array(img.split()[-1]).astype(np.float32) / 255.0
+                                inverted_alpha = 1.0 - alpha
+                                mask_tensor = torch.from_numpy(inverted_alpha).unsqueeze(0)
+                    except:
+                        pass
 
         if final_image_tensor.nelement() == 0:
-             final_image_tensor = torch.zeros(1, 64, 64, 3)
-             mask_tensor = torch.zeros(1, 64, 64)
+            final_image_tensor = torch.zeros(1, 64, 64, 3)
+            mask_tensor = torch.zeros(1, 64, 64)
         elif mask_tensor is None:
-             mask_tensor = torch.zeros(final_image_tensor.shape[0], final_image_tensor.shape[1], final_image_tensor.shape[2], dtype=torch.float32)
+            mask_tensor = torch.zeros(final_image_tensor.shape[0], final_image_tensor.shape[1], final_image_tensor.shape[2], dtype=torch.float32)
 
         for item in selections_list:
             enriched_item = item.copy()
             if item.get('type') == 'image' and 'path' in item and os.path.exists(item['path']):
                 try:
+                    metadata_payload = {}
+
                     with Image.open(item['path']) as img:
-                        metadata_payload = {}
-                        if 'parameters' in img.info: metadata_payload['parameters'] = img.info['parameters']
-                        if 'prompt' in img.info: metadata_payload['prompt'] = img.info['prompt']
-                        if 'workflow' in img.info: metadata_payload['workflow'] = img.info['workflow']
-                        enriched_item['metadata'] = metadata_payload
-                except Exception:
+                        if 'parameters' in img.info:
+                            metadata_payload['parameters'] = img.info['parameters']
+                        if 'prompt' in img.info:
+                            metadata_payload['prompt'] = img.info['prompt']
+                        if 'workflow' in img.info:
+                            metadata_payload['workflow'] = img.info['workflow']
+
+                    # 🔥 NEW: load .recipe.json if it exists
+                    base, _ = os.path.splitext(item['path'])
+                    recipe_path = base + ".recipe.json"
+                    if os.path.exists(recipe_path):
+                        try:
+                            with open(recipe_path, "r", encoding="utf-8") as f:
+                                recipe_data = json.load(f)
+                            metadata_payload['recipe'] = recipe_data
+                        except Exception as e:
+                            print(f"LMM: Failed to load recipe {recipe_path}: {e}")
+
+                    enriched_item['metadata'] = metadata_payload
+
+                except Exception as e:
+                    print(f"LMM: Failed to enrich metadata for {item.get('path')}: {e}")
                     enriched_item['metadata'] = {}
+
             enriched_selection_list.append(enriched_item)
 
         info_string_out = json.dumps(info_strings, indent=4, ensure_ascii=False)
@@ -402,6 +502,33 @@ class LocalMediaManagerNode:
                 pass
         
         full_selection_json_string = json.dumps(enriched_selection_list, ensure_ascii=False)
+                # Pull prompt / recipe outputs from the first selected image, if there is one
+        selected_image_item = next(
+            (item for item in enriched_selection_list if item.get("type") == "image" and item.get("path")),
+            None
+        )
+
+        if selected_image_item:
+            metadata = selected_image_item.get("metadata", {}) or {}
+            recipe = metadata.get("recipe", {}) or {}
+
+            if recipe and "gen_params" in recipe:
+                gen = recipe.get("gen_params", {}) or {}
+
+                prompt_out = gen.get("prompt", "")
+                negative_prompt_out = gen.get("negative_prompt", "")
+                steps_out = int(gen.get("steps", 0) or 0)
+                cfg_out = float(gen.get("cfg_scale", 0.0) or 0.0)
+                seed_out = int(gen.get("seed", 0) or 0)
+
+                loras = recipe.get("loras", []) or []
+                lora_stack_out = "\n".join(
+                    f"{l.get('file_name', '')}:{l.get('strength', 1.0)}"
+                    for l in loras
+                    if not l.get("exclude", False)
+                )
+            else:
+                prompt_out, negative_prompt_out = extract_prompts(metadata)
 
         single_path_out = ""
 
@@ -424,8 +551,20 @@ class LocalMediaManagerNode:
                 except Exception:
                     pass
 
-        return (final_image_tensor, mask_tensor, full_selection_json_string, single_path_out, info_string_out,)
-
+        return (
+            final_image_tensor,
+            mask_tensor,
+            full_selection_json_string,
+            single_path_out,
+            info_string_out,
+            prompt_out,
+            negative_prompt_out,
+            lora_stack_out,
+            steps_out,
+            cfg_out,
+            seed_out,
+        )
+        
 def parse_selection_and_get_item(selection_json_str: str, index: int, expected_type: str = None):
     try:
         selection_list = json.loads(selection_json_str)
@@ -563,16 +702,35 @@ class SelectOriginalImageNode:
                 "aspect_ratio_preservation": (["original", "keep_input", "stretch_to_new", "crop_to_new"], {"tooltip": "Zoom Mode：\n- keep_input: Maintain the aspect ratio of the original image\n- stretch_to_new: Stretch to fit the new size\n- crop_to_new: Cropped to fit new sizes\n- original: No processing is performed, use the original image size"}),
             },
         }
-
-    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING", "STRING",)
-    RETURN_NAMES = ("image", "width", "height", "positive_prompt", "negative_prompt",)
+    RETURN_TYPES = (
+        "IMAGE", 
+        "INT", 
+        "INT", 
+        "STRING", 
+        "STRING", 
+        "STRING", 
+        "INT", 
+        "FLOAT", 
+        "INT"
+        )
+    RETURN_NAMES = (
+        "image", 
+        "width", 
+        "height", 
+        "prompt", 
+        "negative_prompt", 
+        "lora_stack", 
+        "steps", 
+        "cfg_scale", 
+        "seed"
+        )
     FUNCTION = "get_original_image"
     CATEGORY = "📜Asset Gallery/Local"
 
     def get_original_image(self, paths, index, frame_load_cap, generation_width, generation_height, aspect_ratio_preservation):
         selected_item = parse_selection_and_get_item(paths, index, "image")
         
-        empty_return = (torch.zeros(1, 1, 1, 3), 0, 0, "", "")
+        empty_return = (torch.zeros(1, 1, 1, 3), 0, 0, "", "", "", 0, 0.0, 0)
 
         if not selected_item or 'path' not in selected_item or not os.path.exists(selected_item['path']):
             return empty_return
@@ -614,10 +772,35 @@ class SelectOriginalImageNode:
                 else:
                     image_sequence = processed_image
 
-                metadata = selected_item.get('metadata', {})
-                positive_prompt, negative_prompt = extract_prompts(metadata)
-                
-                return (image_sequence, w_new, h_new, positive_prompt, negative_prompt,)
+                    metadata = selected_item.get('metadata', {})
+                    recipe = metadata.get("recipe", {})
+
+                    prompt = ""
+                    negative_prompt = ""
+                    lora_stack = ""
+                    steps = 24
+                    cfg_scale = 7.0
+                    seed = 8008135
+
+                    if recipe and "gen_params" in recipe:
+                        gen = recipe.get("gen_params", {})
+
+                        prompt = gen.get("prompt", "")
+                        negative_prompt = gen.get("negative_prompt", "")
+                        steps = int(gen.get("steps", 0) or 0)
+                        cfg_scale = float(gen.get("cfg_scale", 0.0) or 0.0)
+                        seed = int(gen.get("seed", 0) or 0)
+
+                        loras = recipe.get("loras", [])
+                        lora_stack = "\n".join(
+                            f"{l.get('file_name', '')}:{l.get('strength', 1.0)}"
+                            for l in loras
+                            if not l.get("exclude", False)
+                        )
+                    else:
+                        prompt, negative_prompt = extract_prompts(metadata)
+
+                    return (image_sequence, w_new, h_new, prompt, negative_prompt, lora_stack, steps, cfg_scale, seed)
         except Exception as e:
             print(f"LMM Selector: Error loading or processing image {selected_path}: {e}")
             return empty_return
