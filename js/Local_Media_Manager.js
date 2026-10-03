@@ -1653,14 +1653,21 @@ function initializeLocalMediaManager() {
                     }
                 });
 
-                cardholder.addEventListener('contextmenu', (event) => {
+                galleryContainer.addEventListener('pointerdown', (event) => {
+                    const card = event.target.closest('.lmm-gallery-card');
+                    if (event.button === 2 && card?.dataset.type === 'image') {
+                        event.stopPropagation();
+                    }
+                }, { capture: true });
+
+                galleryContainer.addEventListener('contextmenu', (event) => {
                     const card = event.target.closest('.lmm-gallery-card');
                     if (!card || card.dataset.type !== 'image') return;
 
                     event.preventDefault();
-                    event.stopPropagation();
+                    event.stopImmediatePropagation();
                     showEditOutputMenu.call(this, event, card.dataset.path);
-                });
+                }, { capture: true });
                 
                 cardholder.addEventListener('dblclick', (event) => {
                     const card = event.target.closest('.lmm-gallery-card');
