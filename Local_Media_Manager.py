@@ -196,9 +196,10 @@ def extract_prompts(metadata):
 
 class LocalMediaManagerNode:
     @classmethod
-    def IS_CHANGED(cls, selection, current_path="", **kwargs):
+    def IS_CHANGED(cls, selection, edit_selection="[]", current_path="", **kwargs):
         m = hashlib.sha256()
         m.update(str(selection).encode())
+        m.update(str(edit_selection).encode())
         m.update(str(current_path).encode())
         
         try:
@@ -230,6 +231,14 @@ class LocalMediaManagerNode:
         except Exception:
             pass
 
+        try:
+            edit_paths = json.loads(edit_selection)
+            for path in edit_paths:
+                if path and os.path.exists(path):
+                    m.update(str(os.path.getmtime(path)).encode())
+        except Exception:
+            pass
+
         return m.hexdigest()
 
     @classmethod
@@ -239,21 +248,30 @@ class LocalMediaManagerNode:
             "hidden": {
                 "unique_id": "UNIQUE_ID",
                 "selection": ("STRING", {"default": "[]", "multiline": True, "forceInput": True}),
+                "edit_selection": ("STRING", {"default": "[null, null, null, null, null]", "multiline": True, "forceInput": True}),
                 "gallery_unique_id_widget": ("STRING", {"default": "", "multiline": False}),
                 "current_path": ("STRING", {"default": "", "multiline": False}),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "LMM_ALL_PATHS", "STRING", "STRING",)
-    RETURN_NAMES = ("image", "mask", "paths", "path", "info",)
+    RETURN_TYPES = ("IMAGE", "MASK", "LMM_ALL_PATHS", "STRING", "STRING", "IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE",)
+    RETURN_NAMES = ("image", "mask", "paths", "path", "info", "edit_image_1", "edit_image_2", "edit_image_3", "edit_image_4", "edit_image_5",)
     FUNCTION = "get_selected_media"
     CATEGORY = "📜Asset Gallery/Local"
 
-    def get_selected_media(self, unique_id, gallery_unique_id_widget="", selection="[]", current_path=""):
+    def get_selected_media(self, unique_id, gallery_unique_id_widget="", selection="[]", edit_selection="[]", current_path=""):
         try:
             selections_list = json.loads(selection)
         except (json.JSONDecodeError, TypeError):
             selections_list = []
+
+        try:
+            edit_paths = json.loads(edit_selection)
+            if not isinstance(edit_paths, list):
+                edit_paths = []
+        except (json.JSONDecodeError, TypeError):
+            edit_paths = []
+        edit_paths = (edit_paths + [None] * 5)[:5]
         
         image_paths = [item['path'] for item in selections_list if item.get('type') == 'image' and 'path' in item]
         
@@ -424,7 +442,27 @@ class LocalMediaManagerNode:
                 except Exception:
                     pass
 
-        return (final_image_tensor, mask_tensor, full_selection_json_string, single_path_out, info_string_out,)
+        edit_image_tensors = []
+        for edit_path in edit_paths:
+            fallback = torch.zeros(1, 64, 64, 3)
+            if not edit_path or not isinstance(edit_path, str) or not os.path.isfile(edit_path):
+                edit_image_tensors.append(fallback)
+                continue
+
+            try:
+                with Image.open(edit_path) as img:
+                    has_alpha = img.mode == 'RGBA' or (img.mode == 'P' and 'transparency' in img.info)
+                    img_out = img.convert('RGBA' if has_alpha else 'RGB')
+                    image_array = np.array(img_out).astype(np.float32) / 255.0
+                    image_tensor = torch.from_numpy(image_array)[None,]
+                    if image_tensor.shape[-1] == 4 and torch.min(image_tensor[:, :, :, 3]) > 0.9999:
+                        image_tensor = image_tensor[:, :, :, :3]
+                    edit_image_tensors.append(image_tensor)
+            except Exception as e:
+                print(f"LMM: Error processing edit output image {edit_path}: {e}")
+                edit_image_tensors.append(fallback)
+
+        return (final_image_tensor, mask_tensor, full_selection_json_string, single_path_out, info_string_out, *edit_image_tensors,)
 
 def parse_selection_and_get_item(selection_json_str: str, index: int, expected_type: str = None):
     try:

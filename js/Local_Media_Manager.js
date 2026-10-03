@@ -413,14 +413,13 @@ function setupGlobalMaskEditor() {
 }
 setupGlobalMaskEditor();
 
-app.registerExtension({
-    name: "Comfy.LocalMediaManager",
-    async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name === "LocalMediaManagerNode") {
-            const onNodeCreated = nodeType.prototype.onNodeCreated;
-            nodeType.prototype.onNodeCreated = function () {
-                const r = onNodeCreated?.apply(this, arguments);
-                
+// Nodes 2.0 creates node instances through the extension lifecycle.  Keep the
+// gallery setup on the instance instead of replacing the legacy LiteGraph
+// `onNodeCreated` prototype method, which Nodes 2.0 does not use reliably.
+function initializeLocalMediaManager() {
+                if (this._lmmInitialized) return;
+                this._lmmInitialized = true;
+
                 if (!this.properties || !this.properties.gallery_unique_id) {
                     if (!this.properties) { this.properties = {}; }
                     this.properties.gallery_unique_id = "gallery-" + Math.random().toString(36).substring(2, 11);
@@ -455,15 +454,43 @@ app.registerExtension({
                 };
                 selectionWidget.draw = function(ctx, node, widget_width, y, widget_height) {};
                 selectionWidget.computeSize = function(width) { return [0, 0]; };
+
+                const editSelectionWidget = this.addWidget(
+                    "hidden_text",
+                    "edit_selection",
+                    this.properties.edit_selection || "[null,null,null,null,null]",
+                    () => {},
+                    { multiline: true }
+                );
+                editSelectionWidget.serializeValue = () => {
+                    return node_instance.properties.edit_selection || "[null,null,null,null,null]";
+                };
+                editSelectionWidget.draw = function(ctx, node, widget_width, y, widget_height) {};
+                editSelectionWidget.computeSize = function(width) { return [0, 0]; };
                 
                 const galleryContainer = document.createElement("div");
                 const uniqueId = `lmm-gallery-${Math.random().toString(36).substring(2, 9)}`;
                 galleryContainer.id = uniqueId;
 
                 galleryContainer.dataset.captureWheel = "true";
+                // Nodes 2.0's graph zoom listener can run before a normal
+                // bubble-phase handler. Capture wheel input within the
+                // gallery, scroll the virtualized viewport ourselves, and
+                // keep it from reaching the graph canvas.
                 galleryContainer.addEventListener("wheel", (e) => {
-                     e.stopPropagation();
-                });
+                    const scrollTarget = e.target.closest?.(".lmm-cardholder");
+                    if (!scrollTarget) return;
+
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+
+                    const delta = e.deltaMode === WheelEvent.DOM_DELTA_LINE
+                        ? e.deltaY * 16
+                        : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+                            ? e.deltaY * scrollTarget.clientHeight
+                            : e.deltaY;
+                    scrollTarget.scrollTop += delta;
+                }, { capture: true, passive: false });
                 
                 const folderSVG = `<svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><path d="M928 320H488L416 232c-15.1-18.9-38.3-29.9-63.1-29.9H128c-35.3 0-64 28.7-64 64v512c0 35.3 28.7 64 64 64h800c35.3 0 64-28.7 64-64V384c0-35.3-28.7-64-64-64z" fill="#F4D03F"></path></svg>`;
                 const videoSVG = `<svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><path d="M895.9 203.4H128.1c-35.3 0-64 28.7-64 64v489.2c0 35.3 28.7 64 64 64h767.8c35.3 0 64-28.7 64-64V267.4c0-35.3-28.7-64-64-64zM384 691.2V332.8L668.1 512 384 691.2z" fill="#FFD700"></path></svg>`;
@@ -500,6 +527,20 @@ app.registerExtension({
                         #${uniqueId} .lmm-gallery-card { position: absolute; border: 3px solid transparent; border-radius: 8px; box-sizing: border-box; transition: all 0.3s ease; display: flex; flex-direction: column; background-color: var(--comfy-input-bg); }
                         #${uniqueId} .lmm-gallery-card.lmm-selected { border-color: #00FFC9; }
                         #${uniqueId} .lmm-gallery-card.lmm-edit-selected { border-color: #FFD700; box-shadow: 0 0 10px #FFD700; }
+                        #${uniqueId} .lmm-gallery-card[data-edit-slot="1"] { border-color: #ff6b6b; box-shadow: 0 0 9px #ff6b6b; }
+                        #${uniqueId} .lmm-gallery-card[data-edit-slot="2"] { border-color: #4dabf7; box-shadow: 0 0 9px #4dabf7; }
+                        #${uniqueId} .lmm-gallery-card[data-edit-slot="3"] { border-color: #69db7c; box-shadow: 0 0 9px #69db7c; }
+                        #${uniqueId} .lmm-gallery-card[data-edit-slot="4"] { border-color: #da77f2; box-shadow: 0 0 9px #da77f2; }
+                        #${uniqueId} .lmm-gallery-card[data-edit-slot="5"] { border-color: #ffd43b; box-shadow: 0 0 9px #ffd43b; }
+                        #${uniqueId} .lmm-output-slot-badge { position: absolute; top: 5px; left: 5px; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #111; font-weight: bold; font-size: 13px; z-index: 2; }
+                        #${uniqueId} .lmm-output-slot-badge.slot-1 { background: #ff6b6b; }
+                        #${uniqueId} .lmm-output-slot-badge.slot-2 { background: #4dabf7; }
+                        #${uniqueId} .lmm-output-slot-badge.slot-3 { background: #69db7c; }
+                        #${uniqueId} .lmm-output-slot-badge.slot-4 { background: #da77f2; }
+                        #${uniqueId} .lmm-output-slot-badge.slot-5 { background: #ffd43b; }
+                        #${uniqueId} .lmm-output-slot-menu { position: fixed; z-index: 10000; min-width: 170px; padding: 4px; background: #252a33; border: 1px solid #667085; border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+                        #${uniqueId} .lmm-output-slot-menu button { display: block; width: 100%; padding: 6px 8px; text-align: left; background: transparent; border: 0; color: #e5e7eb; cursor: pointer; }
+                        #${uniqueId} .lmm-output-slot-menu button:hover { background: #3b4350; }
                         #${uniqueId} .lmm-selection-badge {
                             position: absolute;
                             top: 5px;
@@ -621,9 +662,11 @@ app.registerExtension({
                         #${uniqueId} .lmm-tag-filter-wrapper input:not(:placeholder-shown) + .lmm-clear-tag-filter-button {
                             display: block;
                         }
-                        #${uniqueId} .lmm-cardholder::-webkit-scrollbar { width: 8px; }
-                        #${uniqueId} .lmm-cardholder::-webkit-scrollbar-track { background: #2a2a2a; border-radius: 4px; }
-                        #${uniqueId} .lmm-cardholder::-webkit-scrollbar-thumb { background-color: #555; border-radius: 4px; }
+                        #${uniqueId} .lmm-cardholder { scrollbar-width: auto; scrollbar-color: #8a95a8 #1b1d22; }
+                        #${uniqueId} .lmm-cardholder::-webkit-scrollbar { width: 14px; }
+                        #${uniqueId} .lmm-cardholder::-webkit-scrollbar-track { background: #1b1d22; border-radius: 7px; }
+                        #${uniqueId} .lmm-cardholder::-webkit-scrollbar-thumb { background-color: #8a95a8; border: 3px solid #1b1d22; border-radius: 7px; }
+                        #${uniqueId} .lmm-cardholder::-webkit-scrollbar-thumb:hover { background-color: #b2bdd0; }
                         #${uniqueId} .lmm-batch-action-btn { padding: 4px 8px; }
                         #${uniqueId} .lmm-batch-action-btn:disabled { background-color: #333; color: #555; cursor: not-allowed; }
                         #${uniqueId} .lmm-batch-delete-btn:not(:disabled):hover { background-color: #C0392B; }
@@ -696,12 +739,26 @@ app.registerExtension({
                         </div>
                     </div>
                 `;
-                this.addDOMWidget("local_image_gallery", "div", galleryContainer, {});
+                this.addDOMWidget("local_image_gallery", "div", galleryContainer, {
+                    // Nodes 2.0 needs an explicit layout contribution for a
+                    // DOM widget; without it the gallery is allocated only
+                    // the default 50px widget height.
+                    getMinHeight: () => 470,
+                });
                 this.size = [800, 670];
                 
                 const cardholder = galleryContainer.querySelector(".lmm-cardholder");
                 const controls = galleryContainer.querySelector(".lmm-container-wrapper");
                 const placeholder = galleryContainer.querySelector(".lmm-gallery-placeholder");
+                // Absolute-positioned virtual cards do not contribute to a
+                // container's scrollHeight. Keep a normal-flow spacer inside
+                // the fixed-height viewport to represent the full grid.
+                const scrollSpacer = document.createElement("div");
+                scrollSpacer.className = "lmm-scroll-spacer";
+                scrollSpacer.style.width = "1px";
+                scrollSpacer.style.height = "0px";
+                scrollSpacer.style.pointerEvents = "none";
+                cardholder.appendChild(scrollSpacer);
                 
                 const breadcrumbContainer = controls.querySelector(".lmm-breadcrumb-container");
                 const breadcrumbEl = breadcrumbContainer.querySelector(".lmm-breadcrumb");
@@ -871,6 +928,14 @@ app.registerExtension({
                 
                 let isLoading = false, currentPage = 1, totalPages = 1, parentDir = null;
                 let selection = [];
+                let editSelection = [];
+                try {
+                    const savedEditSelection = JSON.parse(this.properties.edit_selection || "[]");
+                    if (Array.isArray(savedEditSelection)) {
+                        editSelection = savedEditSelection.slice(0, 5).map(path => typeof path === "string" ? path : null);
+                    }
+                } catch (_) {}
+                editSelection = (editSelection.concat([null, null, null, null, null])).slice(0, 5);
                 let showSelectedMode = false;
                 let lastKnownPath = "";
                 let selectedCardsForEditing = new Set();
@@ -886,7 +951,7 @@ app.registerExtension({
                 const calculateFullLayout = () => {
                     const minCardWidth = 150, gap = 5, containerWidth = cardholder.clientWidth;
                     if (containerWidth === 0 || allItems.length === 0) {
-                        cardholder.style.height = '0px';
+                        scrollSpacer.style.height = '0px';
                         layoutData = [];
                         return;
                     }
@@ -961,7 +1026,7 @@ app.registerExtension({
                     measuringDiv.innerHTML = "";
                     
                     const totalHeight = Math.max(...columnHeights);
-                    cardholder.style.height = `${totalHeight}px`;
+                    scrollSpacer.style.height = `${totalHeight}px`;
                     
                     updateVisibleItemsAndRender();
                 };
@@ -1022,6 +1087,7 @@ app.registerExtension({
                         }
                     });
                     renderSelectionBadges();
+                    renderEditOutputSlots();
                 }
                 
                 new ResizeObserver(debouncedLayout).observe(cardholder);
@@ -1101,6 +1167,81 @@ app.registerExtension({
                             if(mediaWrapper) mediaWrapper.appendChild(badge);
                         }
                     });
+                }
+
+                function persistEditSelection() {
+                    const selectionJson = JSON.stringify(editSelection);
+                    this.setProperty("edit_selection", selectionJson);
+                    const widget = this.widgets.find(w => w.name === "edit_selection");
+                    if (widget) widget.value = selectionJson;
+                }
+
+                function renderEditOutputSlots() {
+                    cardholder.querySelectorAll('.lmm-gallery-card').forEach(card => {
+                        card.removeAttribute('data-edit-slot');
+                        card.querySelector('.lmm-output-slot-badge')?.remove();
+
+                        const slotIndex = editSelection.findIndex(path => path === card.dataset.path);
+                        if (slotIndex === -1) return;
+
+                        const slot = slotIndex + 1;
+                        card.dataset.editSlot = slot;
+                        const mediaWrapper = card.querySelector('.lmm-card-media-wrapper');
+                        if (mediaWrapper) {
+                            const badge = document.createElement('div');
+                            badge.className = `lmm-output-slot-badge slot-${slot}`;
+                            badge.textContent = slot;
+                            badge.title = `Edit image output ${slot}`;
+                            mediaWrapper.appendChild(badge);
+                        }
+                    });
+                }
+
+                function assignEditOutputSlot(path, slotIndex) {
+                    editSelection = editSelection.map(existingPath => existingPath === path ? null : existingPath);
+                    editSelection[slotIndex] = path;
+                    persistEditSelection.call(this);
+                    renderEditOutputSlots();
+                }
+
+                function clearEditOutputSlot(slotIndex) {
+                    editSelection[slotIndex] = null;
+                    persistEditSelection.call(this);
+                    renderEditOutputSlots();
+                }
+
+                function showEditOutputMenu(event, path) {
+                    document.querySelectorAll('.lmm-output-slot-menu').forEach(menu => menu.remove());
+                    const menu = document.createElement('div');
+                    menu.className = 'lmm-output-slot-menu';
+
+                    for (let slotIndex = 0; slotIndex < 5; slotIndex++) {
+                        const slot = slotIndex + 1;
+                        const button = document.createElement('button');
+                        button.textContent = editSelection[slotIndex] === path ? `✓ Edit image ${slot}` : `Assign to edit image ${slot}`;
+                        button.addEventListener('click', () => {
+                            assignEditOutputSlot.call(this, path, slotIndex);
+                            menu.remove();
+                        });
+                        menu.appendChild(button);
+                    }
+
+                    const clearButton = document.createElement('button');
+                    clearButton.textContent = 'Clear this image assignment';
+                    clearButton.addEventListener('click', () => {
+                        editSelection.forEach((assignedPath, slotIndex) => {
+                            if (assignedPath === path) clearEditOutputSlot.call(this, slotIndex);
+                        });
+                        menu.remove();
+                    });
+                    menu.appendChild(clearButton);
+
+                    menu.style.left = `${event.clientX}px`;
+                    menu.style.top = `${event.clientY}px`;
+                    document.body.appendChild(menu);
+                    setTimeout(() => document.addEventListener('pointerdown', outsideEvent => {
+                        if (!menu.contains(outsideEvent.target)) menu.remove();
+                    }, { once: true }), 0);
                 }
                 
                 function renderTagEditor() {
@@ -1403,6 +1544,7 @@ app.registerExtension({
                         if (!append) {
                             allItems = items;
                             cardholder.innerHTML = ''; 
+                            cardholder.appendChild(scrollSpacer);
                             cardholder.scrollTop = 0;
                         } else {
                             const existingPaths = new Set(allItems.map(i => i.path));
@@ -1509,6 +1651,15 @@ app.registerExtension({
                         updateBatchActionButtonsState();
                         
                     }
+                });
+
+                cardholder.addEventListener('contextmenu', (event) => {
+                    const card = event.target.closest('.lmm-gallery-card');
+                    if (!card || card.dataset.type !== 'image') return;
+
+                    event.preventDefault();
+                    event.stopPropagation();
+                    showEditOutputMenu.call(this, event, card.dataset.path);
                 });
                 
                 cardholder.addEventListener('dblclick', (event) => {
@@ -1969,7 +2120,12 @@ app.registerExtension({
                 loadSavedPaths();
                 loadAllTags();
                 
+                // addDOMWidget registers its own resize handler.  Chain it
+                // rather than replacing it so the Nodes 2.0 DOM-widget store
+                // stays synchronized when this node is resized.
+                const previousOnResize = this.onResize;
                 this.onResize = function(size) {
+                    previousOnResize?.apply(this, arguments);
                     const minHeight = 470;
                     const minWidth = 800;
                     if (size[1] < minHeight) size[1] = minHeight;
@@ -2001,10 +2157,18 @@ app.registerExtension({
                     }
                 });
                 
-                return r;
-            };
+}
 
+app.registerExtension({
+    name: "Comfy.LocalMediaManager",
+    async beforeRegisterNodeDef(nodeType, nodeData) {
+        if (nodeType.comfyClass === "LocalMediaManagerNode" || nodeData.name === "LocalMediaManagerNode") {
             addGitHubIcon(nodeType, "https://github.com/Firetheft/ComfyUI_Local_Media_Manager");
+        }
+    },
+    async nodeCreated(node) {
+        if (node.comfyClass === "LocalMediaManagerNode") {
+            initializeLocalMediaManager.call(node);
         }
     },
 });
