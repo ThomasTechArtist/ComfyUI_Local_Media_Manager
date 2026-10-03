@@ -1171,9 +1171,9 @@ function initializeLocalMediaManager() {
 
                 function persistEditSelection() {
                     const selectionJson = JSON.stringify(editSelection);
+                    node_instance.properties.edit_selection = selectionJson;
                     this.setProperty("edit_selection", selectionJson);
-                    const widget = this.widgets.find(w => w.name === "edit_selection");
-                    if (widget) widget.value = selectionJson;
+                    editSelectionWidget.value = selectionJson;
                 }
 
                 function renderEditOutputSlots() {
