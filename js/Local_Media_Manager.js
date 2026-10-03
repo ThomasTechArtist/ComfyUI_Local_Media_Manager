@@ -1619,6 +1619,21 @@ function initializeLocalMediaManager() {
                     }
                     
                     if (['image', 'video', 'audio'].includes(type)) {
+                        if (event.altKey && type === 'image') {
+                            const assignedSlot = editSelection.findIndex(assignedPath => assignedPath === path);
+                            if (assignedSlot >= 0) {
+                                clearEditOutputSlot.call(this, assignedSlot);
+                            } else {
+                                const nextFreeSlot = editSelection.findIndex(assignedPath => !assignedPath);
+                                if (nextFreeSlot >= 0) {
+                                    assignEditOutputSlot.call(this, path, nextFreeSlot);
+                                } else {
+                                    alert('All five edit image outputs are assigned. Alt-click an assigned image to clear its slot.');
+                                }
+                            }
+                            return;
+                        }
+
                         const selectionIndex = selection.findIndex(item => item.path === path);
                         
                         if (event.ctrlKey) {
