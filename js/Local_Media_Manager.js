@@ -473,12 +473,16 @@ function initializeLocalMediaManager() {
                 galleryContainer.id = uniqueId;
 
                 galleryContainer.dataset.captureWheel = "true";
-                // Nodes 2.0's graph zoom listener can run before a normal
-                // bubble-phase handler. Capture wheel input within the
-                // gallery, scroll the virtualized viewport ourselves, and
-                // keep it from reaching the graph canvas.
-                galleryContainer.addEventListener("wheel", (e) => {
-                    const scrollTarget = e.target.closest?.(".lmm-cardholder");
+                // Nodes 2.0 listens for wheel input on a graph-level parent,
+                // before a listener attached to the DOM widget itself. Listen
+                // from window's capture phase so the gallery owns its wheel
+                // input while the pointer is over its scrollable viewport.
+                const captureGalleryWheel = (e) => {
+                    if (!galleryContainer.isConnected) return;
+                    const eventPath = e.composedPath?.() || [];
+                    const scrollTarget = eventPath.find((element) =>
+                        element?.classList?.contains?.("lmm-cardholder")
+                    ) || e.target.closest?.(".lmm-cardholder");
                     if (!scrollTarget) return;
 
                     e.preventDefault();
@@ -490,7 +494,17 @@ function initializeLocalMediaManager() {
                             ? e.deltaY * scrollTarget.clientHeight
                             : e.deltaY;
                     scrollTarget.scrollTop += delta;
-                }, { capture: true, passive: false });
+                };
+                window.addEventListener("wheel", captureGalleryWheel, { capture: true, passive: false });
+                this.__lmmCaptureGalleryWheel = captureGalleryWheel;
+                const previousOnRemoved = this.onRemoved;
+                this.onRemoved = function(...args) {
+                    if (this.__lmmCaptureGalleryWheel) {
+                        window.removeEventListener("wheel", this.__lmmCaptureGalleryWheel, { capture: true });
+                        delete this.__lmmCaptureGalleryWheel;
+                    }
+                    return previousOnRemoved?.apply(this, args);
+                };
                 
                 const folderSVG = `<svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><path d="M928 320H488L416 232c-15.1-18.9-38.3-29.9-63.1-29.9H128c-35.3 0-64 28.7-64 64v512c0 35.3 28.7 64 64 64h800c35.3 0 64-28.7 64-64V384c0-35.3-28.7-64-64-64z" fill="#F4D03F"></path></svg>`;
                 const videoSVG = `<svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><path d="M895.9 203.4H128.1c-35.3 0-64 28.7-64 64v489.2c0 35.3 28.7 64 64 64h767.8c35.3 0 64-28.7 64-64V267.4c0-35.3-28.7-64-64-64zM384 691.2V332.8L668.1 512 384 691.2z" fill="#FFD700"></path></svg>`;
