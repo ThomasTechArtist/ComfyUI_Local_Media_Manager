@@ -254,8 +254,8 @@ class LocalMediaManagerNode:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "LMM_ALL_PATHS", "STRING", "STRING", "IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE",)
-    RETURN_NAMES = ("image", "mask", "paths", "path", "info", "edit_image_1", "edit_image_2", "edit_image_3", "edit_image_4", "edit_image_5",)
+    RETURN_TYPES = ("IMAGE", "MASK", "LMM_ALL_PATHS", "STRING", "STRING", "STRING", "IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE",)
+    RETURN_NAMES = ("image", "mask", "paths", "path", "filename", "info", "edit_image_1", "edit_image_2", "edit_image_3", "edit_image_4", "edit_image_5",)
     FUNCTION = "get_selected_media"
     CATEGORY = "📜Asset Gallery/Local"
 
@@ -421,16 +421,22 @@ class LocalMediaManagerNode:
         
         full_selection_json_string = json.dumps(enriched_selection_list, ensure_ascii=False)
 
-        single_path_out = ""
+        folder_path_out = ""
+        filename_out = ""
 
         if len(selections_list) == 1:
             item = selections_list[0]
             if 'path' in item and os.path.exists(item['path']):
-                single_path_out = item['path']
+                selected_path = item['path']
+                if os.path.isdir(selected_path):
+                    folder_path_out = selected_path
+                else:
+                    folder_path_out = os.path.dirname(selected_path)
+                    filename_out = os.path.basename(selected_path)
 
         elif len(selections_list) == 0:
             if current_path and os.path.isdir(current_path):
-                single_path_out = current_path
+                folder_path_out = current_path
             else:
                 try:
                     ui_states = load_ui_state()
@@ -438,7 +444,7 @@ class LocalMediaManagerNode:
                     if node_key and node_key in ui_states:
                         saved_path = ui_states[node_key].get("last_path", "")
                         if saved_path and os.path.isdir(saved_path):
-                            single_path_out = saved_path
+                            folder_path_out = saved_path
                 except Exception:
                     pass
 
@@ -462,7 +468,7 @@ class LocalMediaManagerNode:
                 print(f"LMM: Error processing edit output image {edit_path}: {e}")
                 edit_image_tensors.append(fallback)
 
-        return (final_image_tensor, mask_tensor, full_selection_json_string, single_path_out, info_string_out, *edit_image_tensors,)
+        return (final_image_tensor, mask_tensor, full_selection_json_string, folder_path_out, filename_out, info_string_out, *edit_image_tensors,)
 
 def parse_selection_and_get_item(selection_json_str: str, index: int, expected_type: str = None):
     try:
